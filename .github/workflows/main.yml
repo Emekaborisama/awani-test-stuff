@@ -70,24 +70,36 @@ jobs:
             echo "Patch version change - analyzing all PRs: $pr_numbers"
           fi
           
-          # Get current chart configs
+          # Extract changed dependency names and their version changes
+          changed_deps=$(echo "$dependency_diff" | grep "^[+-].*name:" | sed 's/^[+-].*name: *//' | sort -u)
+          echo "Changed dependencies: $changed_deps"
+          
+          # Get current configs only for changed dependencies
           current_config=""
           if [ -f "values.yaml" ]; then
-            config=$(cat "values.yaml")
-            current_config="=== values.yaml ===\n$config"
+            for dep in $changed_deps; do
+              dep_config=$(yq eval ".$dep // empty" "values.yaml" 2>/dev/null)
+              if [ -n "$dep_config" ] && [ "$dep_config" != "null" ]; then
+                current_config="$current_config\n\n=== $dep config ===\n$dep_config"
+              fi
+            done
           fi
           
-          # Analyze PR changes
+          echo "Analyzing configs for: $changed_deps"
+          
+          # Analyze PR changes for only the changed dependencies
           combined_analysis=""
           for pr_num in $pr_numbers; do
             if [ -n "$pr_num" ]; then
-              pr_diff=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-                "https://api.github.com/repos/bitnami/charts/pulls/${pr_num}/files" | \
-                jq -r '.[] | select(.filename | contains("values.yaml")) | .patch')
-              
-              if [ -n "$pr_diff" ] && [ "$pr_diff" != "null" ]; then
-                combined_analysis="$combined_analysis\n\n=== PR #$pr_num ===\n$pr_diff"
-              fi
+              for dep in $changed_deps; do
+                pr_diff=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                  "https://api.github.com/repos/bitnami/charts/pulls/${pr_num}/files" | \
+                  jq -r ".[] | select(.filename | contains(\"${dep}/values.yaml\")) | .patch")
+                
+                if [ -n "$pr_diff" ] && [ "$pr_diff" != "null" ]; then
+                  combined_analysis="$combined_analysis\n\n=== PR #$pr_num ($dep) ===\n$pr_diff"
+                fi
+              done
             fi
           done
           
@@ -100,7 +112,7 @@ jobs:
             '{
               "messages": [
                 {"role": "system", "content": "Analyze Helm chart breaking changes. Output exactly this format:\n* label: breaking | non-breaking\n* confidence: <percentage>\n* rationale: <reasoning>"},
-                {"role": "user", "content": ("Version: " + $old_ver + " -> " + $new_ver + "\nCurrent config:\n" + $config + "\nPR changes:\n" + $changes + "\n\nAnalyze if changes break existing configurations.")}
+                {"role": "user", "content": ("Dependencies changed: " + $deps + "\nOnly analyze config for: " + $deps + "\nCurrent config:\n" + $config + "\nPR changes:\n" + $changes + "\n\nAnalyze ONLY breaking changes for the specific dependencies that changed.")}
               ],
               "model": "openai/gpt-4o"
             }' | curl -s "https://models.github.ai/inference/chat/completions" \
