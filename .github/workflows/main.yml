@@ -35,7 +35,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.TOKEN}}
         run: |
           # Extract version change from diff
-          version_diff=$(git diff HEAD~1 Chart.yaml | grep "^[+-]version:")
+          version_diff=$(git diff HEAD~1 -- Chart.yaml | grep "^[+-]version:" || true)
+          
+          if [ -z "$version_diff" ]; then
+            echo "No version changes found in Chart.yaml"
+            exit 0
+          fi
+          
           current_version=$(echo "$version_diff" | grep "^-version:" | cut -d' ' -f2)
           new_version=$(echo "$version_diff" | grep "^+version:" | cut -d' ' -f2)
           
@@ -61,14 +67,10 @@ jobs:
           
           # Get current chart configs
           current_config=""
-          changed_deps=$(git diff HEAD~1 --name-only | grep Chart.yaml | xargs -I {} dirname {} | while read dir; do basename "$dir"; done)
-          
-          for dep in $changed_deps; do
-            if [ -f "$dep/values.yaml" ]; then
-              config=$(cat "$dep/values.yaml")
-              current_config="$current_config\n\n=== $dep ===\n$config"
-            fi
-          done
+          if [ -f "values.yaml" ]; then
+            config=$(cat "values.yaml")
+            current_config="=== values.yaml ===\n$config"
+          fi
           
           # Analyze PR changes
           combined_analysis=""
