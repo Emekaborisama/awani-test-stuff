@@ -4,8 +4,8 @@ on:
   pull_request:
     types: [opened, reopened, ready_for_review]
     paths:
-      - '**/Chart.yaml'
-      - '**/values.yaml'
+      - 'Chart.yaml'
+      - 'values.yaml'
   issue_comment:
     types: [created]
 
@@ -44,81 +44,7 @@ jobs:
           
           current_version=$(echo "$version_diff" | grep "^-version:" | cut -d' ' -f2)
           new_version=$(echo "$version_diff" | grep "^+version:" | cut -d' ' -f2)
-          
+          $(echo "$version_diff" | grep "^-version:" | cut -d' ' -f2)
+          $(echo "$version_diff" | grep "^+version:" | cut -d' ' -f2)
           # Parse semantic versions
-          current_major=$(echo $current_version | cut -d. -f1)
-          current_minor=$(echo $current_version | cut -d. -f2)
-          new_major=$(echo $new_version | cut -d. -f1)
-          new_minor=$(echo $new_version | cut -d. -f2)
           
-          echo "Version: $current_version -> $new_version"
-          
-          # Extract PR numbers from renovate changelog
-          pr_body_full=$(gh pr view --json body --jq '.body')
-          pr_numbers=$(echo "$pr_body_full" | grep -oE '\[#&#8203;[0-9]+\]' | sed -E 's/.*&#8203;([0-9]+).*/\1/' | tr '\n' ' ')
-          
-          # Limit to top 5 PRs if major/minor version changed
-          if [ "$current_major" != "$new_major" ] || [ "$current_minor" != "$new_minor" ]; then
-            pr_numbers=$(echo $pr_numbers | tr ' ' '\n' | head -5 | tr '\n' ' ')
-            echo "Major/minor change detected - analyzing top 5 PRs: $pr_numbers"
-          else
-            echo "Patch version change - analyzing all PRs: $pr_numbers"
-          fi
-          
-          # Get current chart configs
-          current_config=""
-          if [ -f "values.yaml" ]; then
-            config=$(cat "values.yaml")
-            current_config="=== values.yaml ===\n$config"
-          fi
-          
-          # Analyze PR changes
-          combined_analysis=""
-          for pr_num in $pr_numbers; do
-            if [ -n "$pr_num" ]; then
-              pr_diff=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-                "https://api.github.com/repos/bitnami/charts/pulls/${pr_num}/files" | \
-                jq -r '.[] | select(.filename | contains("values.yaml")) | .patch')
-              
-              if [ -n "$pr_diff" ] && [ "$pr_diff" != "null" ]; then
-                combined_analysis="$combined_analysis\n\n=== PR #$pr_num ===\n$pr_diff"
-              fi
-            fi
-          done
-          
-          # AI breaking change analysis
-          ai_response=$(jq -n \
-            --arg old_ver "$current_version" \
-            --arg new_ver "$new_version" \
-            --arg config "$current_config" \
-            --arg changes "$combined_analysis" \
-            '{
-              "messages": [
-                {"role": "system", "content": "Analyze Helm chart breaking changes. Output exactly this format:\n* label: breaking | non-breaking\n* confidence: <percentage>\n* rationale: <reasoning>"},
-                {"role": "user", "content": ("Version: " + $old_ver + " -> " + $new_ver + "\nCurrent config:\n" + $config + "\nPR changes:\n" + $changes + "\n\nAnalyze if changes break existing configurations.")}
-              ],
-              "model": "openai/gpt-4o"
-            }' | curl -s "https://models.github.ai/inference/chat/completions" \
-             -H "Content-Type: application/json" \
-             -H "Authorization: Bearer $GITHUB_TOKEN" \
-             -d @-)
-          
-          ai_analysis=$(echo "$ai_response" | jq -r '.choices[0].message.content')
-          echo "$ai_analysis" > changelog-analysis.md
-          
-          # Extract label and apply to PR
-          label=$(echo "$ai_analysis" | grep "^* label:" | cut -d' ' -f3)
-          
-          if [ "$label" = "breaking" ]; then
-            gh pr edit --add-label "breaking-change"
-            echo "breaking_changes=true" >> $GITHUB_OUTPUT
-          else
-            gh pr edit --add-label "non-breaking-change"
-            echo "breaking_changes=false" >> $GITHUB_OUTPUT
-          fi
-          
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add changelog-analysis.md
-          git commit -m "Breaking change analysis" || true
-          git push || true
