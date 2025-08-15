@@ -1,0 +1,14 @@
+apiVersion: v2
+name: test-install-chart
+description: Simple chart to test ct-install with Renovate updates
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+dependencies:
+  - name: nginx
+    version: "15.14.2"
+    repository: "https://charts.bitnami.com/bitnami"
+  - name: redis
+    version: "17.17.1"
+    repository: "https://charts.bitnami.com/bitnami"

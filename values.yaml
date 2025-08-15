@@ -1,0 +1,60 @@
+# Simple values that should work with current chart versions
+nginx:
+  # Old nginx configuration that will break with newer versions
+  service:
+    type: ClusterIP
+    port: 80
+  replicaCount: 1
+
+  # Breaking: Old image format (deprecated in newer nginx charts)
+  image:
+    repository: nginx
+    tag: "1.20"
+    pullPolicy: IfNotPresent
+
+  # Breaking: Old ingress format (changed in newer charts)
+  ingress:
+    enabled: false
+    annotations:
+      kubernetes.io/ingress.class: nginx # Deprecated, now use ingressClassName
+    hosts:
+      - host: example.local
+        paths: ["/"]
+
+  # Breaking: Old resource format
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+  # Breaking: Old security context format
+  securityContext:
+    enabled: true
+    fsGroup: 1001
+    runAsUser: 1001
+
+redis:
+  # Using old format that will break with newer Redis versions
+  usePassword: true
+  password: "test123"
+
+  master:
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        memory: 64Mi
+        cpu: 50m
+
+  slave:
+    replicaCount: 1
+    persistence:
+      enabled: false
+
+# Simple app config
+app:
+  name: "test-app"
+  port: 3000
