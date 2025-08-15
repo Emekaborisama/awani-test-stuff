@@ -39,7 +39,7 @@ jobs:
         run: |
           # Extract dependency version changes from Chart.yaml
           dependency_diff=$(git diff HEAD~1 -- Chart.yaml | grep "^[+-].*version:" || true)
-          echo $dependency_diff
+          
           if [ -z "$dependency_diff" ]; then
             echo "No dependency version changes found in Chart.yaml"
             exit 0
@@ -116,11 +116,15 @@ jobs:
           
           echo "Detected label: $label"
           
+          # Create labels if they don't exist
+          gh label create "breaking-change" --color "d73a4a" --description "Contains breaking changes" --force || true
+          gh label create "non-breaking-change" --color "0e8a16" --description "No breaking changes" --force || true
+          
           if [ "$label" = "breaking" ]; then
-            gh pr edit $pr_number --add-label "breaking-change" || echo "Failed to add breaking-change label"
+            gh pr edit $pr_number --add-label "breaking-change"
             echo "breaking_changes=true" >> $GITHUB_OUTPUT
           else
-            gh pr edit $pr_number --add-label "non-breaking-change" || echo "Failed to add non-breaking-change label"
+            gh pr edit $pr_number --add-label "non-breaking-change"
             echo "breaking_changes=false" >> $GITHUB_OUTPUT
           fi
           
