@@ -114,11 +114,13 @@ jobs:
           # Extract label and apply to PR
           label=$(echo "$ai_analysis" | grep "^* label:" | cut -d' ' -f3)
           
+          echo "Detected label: $label"
+          
           if [ "$label" = "breaking" ]; then
-            gh pr edit --add-label "breaking-change"
+            gh pr edit $pr_number --add-label "breaking-change" || echo "Failed to add breaking-change label"
             echo "breaking_changes=true" >> $GITHUB_OUTPUT
           else
-            gh pr edit --add-label "non-breaking-change"
+            gh pr edit $pr_number --add-label "non-breaking-change" || echo "Failed to add non-breaking-change label"
             echo "breaking_changes=false" >> $GITHUB_OUTPUT
           fi
           
