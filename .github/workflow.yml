@@ -1,1 +1,186 @@
 
+name: Chart Testing for Renovate Updates
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+    paths:
+      - '**/Chart.yaml'
+      - '**/values.yaml'
+  issue_comment:
+    types: [created]
+
+jobs:
+  chart-testing:
+    # Only run on Renovate PRs
+    if: >
+      (github.event_name == 'pull_request' && 
+       (contains(github.head_ref, 'renovate/') || contains(github.actor, 'renovate')))
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: write
+      models: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.PR_AGENT_PAT }}
+
+      - name: Analyze changelogs for breaking changes
+        id: changelog-analysis
+        env:
+          GITHUB_TOKEN: ${{ secrets.PR_AGENT_PAT}}
+        run: |
+          # Get Renovate PR changelog with PR numbers
+          echo "=== Extracting changelog PR numbers ==="
+          pr_body_full=$(gh pr view --json body --jq '.body')
+          
+          # Debug: Show what we got from GitHub
+          echo "=== PR Body Debug ==="
+          echo "PR body length: ${#pr_body_full}"
+          echo "PR body preview (first 500 chars):"
+          echo "$pr_body_full" | head -c 500
+          echo "=== End PR Body Debug ==="
+          
+          # Extract first 5 PR numbers from changelog
+          echo "=== PR Number Extraction Debug ==="
+          echo "Searching for different patterns..."
+          echo "Pattern 1 - (#35711):"
+          echo "$pr_body_full" | grep -oE '\(#[0-9]+\)' || echo "No (#number) patterns found"
+          echo "Pattern 2 - #35711:"
+          echo "$pr_body_full" | grep -oE '#[0-9]{4,}' || echo "No #number patterns found"
+          echo "Pattern 3 - Any # followed by digits:"
+          echo "$pr_body_full" | grep -oE '#[0-9]+' | head -10 || echo "No # patterns found"
+          echo "Raw search for '35711' in body:"
+          echo "$pr_body_full" | grep '35711' || echo "35711 not found"
+          
+          # Extract PR numbers from markdown links like [#&#8203;24506](...)
+          echo "Looking for markdown link pattern [#&#8203;XXXXX]:"
+          echo "$pr_body_full" | grep -oE '\[#&#8203;[0-9]+\]' || echo "No markdown link patterns found"
+          
+          # Extract the numbers from the links
+          pr_numbers=$(echo "$pr_body_full" | grep -oE '\[#&#8203;[0-9]+\]' | sed -E 's/.*&#8203;([0-9]+).*/\1/' | head -5 | tr '\n' ' ')
+          echo "Extracted PR numbers from markdown links: '$pr_numbers'"
+          echo "PR numbers count: $(echo "$pr_numbers" | wc -w)"
+          echo "=== End PR Number Extraction Debug ==="
+          
+          # Extract current configuration for changed dependencies
+          echo "=== Extracting current dependency configurations ==="
+          current_config=""
+          changed_deps=$(find . -name "Chart.yaml" -exec git diff HEAD~1 {} \; | grep -B 1 "version:" | grep "name:" | sed 's/.*name: \([^"]*\).*/\1/' || echo "")
+          echo "Changed dependencies: $changed_deps"
+          
+          for chart_dir in */; do
+            if [ -f "$chart_dir/values.yaml" ]; then
+              chart_name=$(basename "$chart_dir")
+              for dep in $changed_deps; do
+                if [ -n "$dep" ]; then
+                  dep_config=$(yq eval ".$dep // empty" "$chart_dir/values.yaml" 2>/dev/null || echo "")
+                  if [ -n "$dep_config" ] && [ "$dep_config" != "null" ]; then
+                    current_config="$current_config\n\n=== Current $dep configuration ===\n$dep_config"
+                  fi
+                fi
+              done
+            fi
+          done
+          
+          # Analyze changelog PRs for breaking changes
+          echo "=== Analyzing changelog PRs ==="
+          combined_analysis=""
+          pr_count=0
+          
+          for pr_num in $pr_numbers; do
+            if [ -n "$pr_num" ]; then
+              pr_count=$((pr_count + 1))
+              echo "Analyzing PR #$pr_num ($pr_count/5)"
+              
+              # Get PR details
+              pr_info=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                "https://api.github.com/repos/bitnami/charts/pulls/${pr_num}" 2>/dev/null || echo "")
+              
+              if [ -n "$pr_info" ] && [ "$pr_info" != "null" ]; then
+                # Extract chart name from PR title
+                chart_name=$(echo "$pr_info" | jq -r '.title' 2>/dev/null | grep -o '\[bitnami/[^]]*\]' | sed 's/.*bitnami\/\([^]]*\).*/\1/' || echo "")
+                
+                if [ -n "$chart_name" ]; then
+                  echo "Found chart: $chart_name in PR #$pr_num"
+                  
+                  # Get file changes for this chart
+                  pr_diff=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                    "https://api.github.com/repos/bitnami/charts/pulls/${pr_num}/files" 2>/dev/null | \
+                    jq -r ".[] | select(.filename | contains(\"${chart_name}/values.yaml\")) | .patch" 2>/dev/null || echo "")
+                  
+                  if [ -n "$pr_diff" ] && [ "$pr_diff" != "null" ]; then
+                    combined_analysis="$combined_analysis\n\n=== PR #$pr_num ($chart_name) Changes ===\n$pr_diff"
+                  fi
+                fi
+              fi
+            fi
+          done
+          
+          echo "=== Analysis lengths - Current config: ${#current_config}, PR analysis: ${#combined_analysis} ==="
+          
+          # Call GitHub Models AI to analyze changelogs against values
+          echo "Analyzing changelogs for breaking changes..."
+          
+          # Use jq to safely build the PR-based analysis request
+          ai_response=$(jq -n \
+            --arg changed_deps "$changed_deps" \
+            --arg current_config "$current_config" \
+            --arg combined_analysis "$combined_analysis" \
+            '{
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are a Helm chart expert specializing in breaking change analysis. Analyze actual chart changes from GitHub PRs against current configuration to identify compatibility issues."
+                },
+                {
+                  "role": "user",
+                  "content": ("Dependencies updated: " + $changed_deps + "\n\nCurrent configuration:\n" + $current_config + "\n\nChart changes from recent PRs:\n" + $combined_analysis + "\n\nAnalyze:\n1. Direct conflicts between my config and these PR changes\n2. General deprecations in my config (even if not mentioned in PRs)\n3. Provide specific migration steps for ALL issues found\n\nFocus on common patterns: authentication formats, master/slave terminology, image configs, security contexts.")
+                }
+              ],
+              "model": "openai/gpt-4o"
+            }' | curl -s "https://models.github.ai/inference/chat/completions" \
+             -H "Content-Type: application/json" \
+             -H "Authorization: Bearer $GITHUB_TOKEN" \
+             -d @-)
+          
+          # Debug: Show raw API response
+          echo "=== Raw AI Response ==="
+          echo "$ai_response"
+          echo "======================"
+          
+          # Extract and save analysis
+          ai_analysis=$(echo "$ai_response" | jq -r '.choices[0].message.content' 2>/dev/null || echo "Analysis failed")
+          echo "$ai_analysis" > changelog-analysis.md
+          
+          # Debug: Show what we got
+          echo "=== AI Response ==="
+          echo "$ai_analysis"
+          echo "=================="
+          
+          # Debug: Show PR body
+          echo "=== PR Body ==="
+          echo "$pr_body_full"
+          echo "==============="
+          
+          # Check if breaking changes detected
+          if echo "$ai_analysis" | grep -qi "breaking\|deprecated\|removed\|incompatible\|migration"; then
+            echo "✅ Breaking changes detected!"
+            echo "breaking_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ No breaking changes detected"
+            echo "breaking_changes=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Commit the changelog analysis back to PR
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add changelog-analysis.md
+          git commit -m "Add AI changelog analysis" || true
+          git push || true
