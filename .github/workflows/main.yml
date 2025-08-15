@@ -29,12 +29,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
-          token: ${{ secrets.PR_AGENT_PAT }}
+          token: ${{ secrets.TOKEN }}
 
       - name: Analyze changelogs for breaking changes
         id: changelog-analysis
         env:
-          GITHUB_TOKEN: ${{ secrets.PR_AGENT_PAT}}
+          GITHUB_TOKEN: ${{ secrets.TOKEN}}
         run: |
           # Get Renovate PR changelog with PR numbers
           echo "=== Extracting changelog PR numbers ==="
