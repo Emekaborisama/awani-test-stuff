@@ -39,7 +39,7 @@ jobs:
         run: |
           # Extract dependency version changes from Chart.yaml
           dependency_diff=$(git diff HEAD~1 -- Chart.yaml | grep "^[+-].*version:" || true)
-          
+          echo $dependency_diff
           if [ -z "$dependency_diff" ]; then
             echo "No dependency version changes found in Chart.yaml"
             exit 0
