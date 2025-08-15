@@ -70,9 +70,9 @@ jobs:
             echo "Patch version change - analyzing all PRs: $pr_numbers"
           fi
           
-          # Extract changed dependency names and their version changes
-          changed_deps=$(echo "$dependency_diff" | grep "^[+-].*name:" | sed 's/^[+-].*name: *//' | sort -u)
-          echo "Changed dependencies: $changed_deps"
+          # Extract changed dependency names from version lines only
+          changed_deps=$(echo "$dependency_diff" | grep -B1 "^[+-].*version:" | grep "name:" | sed 's/^[+-]*.*name: *//' | sort -u | tr '\n' ' ')
+          echo "Changed dependencies: '$changed_deps'"
           
           # Get current configs only for changed dependencies
           current_config=""
@@ -105,8 +105,7 @@ jobs:
           
           # AI breaking change analysis
           ai_response=$(jq -n \
-            --arg old_ver "$current_version" \
-            --arg new_ver "$new_version" \
+            --arg deps "$changed_deps" \
             --arg config "$current_config" \
             --arg changes "$combined_analysis" \
             '{
