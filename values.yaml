@@ -1,40 +1,5 @@
 # Simple values that should work with current chart versions
-nginx:
-  # Old nginx configuration that will break with newer versions
-  service:
-    type: ClusterIP
-    port: 80
-  replicaCount: 1
 
-  # Breaking: Old image format (deprecated in newer nginx charts)
-  image:
-    repository: nginx
-    tag: "1.20"
-    pullPolicy: IfNotPresent
-
-  # Breaking: Old ingress format (changed in newer charts)
-  ingress:
-    enabled: false
-    annotations:
-      kubernetes.io/ingress.class: nginx # Deprecated, now use ingressClassName
-    hosts:
-      - host: example.local
-        paths: ["/"]
-
-  # Breaking: Old resource format
-  resources:
-    limits:
-      cpu: 500m
-      memory: 512Mi
-    requests:
-      cpu: 250m
-      memory: 256Mi
-
-  # Breaking: Old security context format
-  securityContext:
-    enabled: true
-    fsGroup: 1001
-    runAsUser: 1001
 
 redis:
   # Using old format that will break with newer Redis versions
@@ -54,7 +19,102 @@ redis:
     persistence:
       enabled: false
 
+
+
+nginx:
+  # BREAKING: Old image configuration format (deprecated in nginx 13+)
+  image:
+    registry: docker.io
+    repository: bitnami/nginx
+    tag: 1.20.2-debian-10-r77
+    pullPolicy: IfNotPresent
+    # BREAKING: pullSecrets was moved to a different location
+    pullSecrets: []
+  
+  # BREAKING: Old service configuration (serviceType renamed to service.type)
+  serviceType: ClusterIP
+  servicePort: 8080
+  
+  # BREAKING: Old ingress format (completely restructured in nginx 13+)
+  ingress:
+    enabled: true
+    certManager: false
+    # BREAKING: annotations format changed
+    annotations:
+      kubernetes.io/ingress.class: "nginx"  # Should be ingressClassName
+      nginx.ingress.kubernetes.io/rewrite-target: /
+    # BREAKING: hosts format completely changed
+    hosts:
+      - name: nginx.local
+        path: /
+        tls: false
+        tlsSecret: nginx.local-tls
+  
+  # BREAKING: Old resource format (requests/limits structure changed)
+  resources:
+    # This format was deprecated
+    requests: "64Mi"
+    limits: "128Mi"
+  
+  # BREAKING: Old security context format (moved to containerSecurityContext)
+  securityContext:
+    enabled: true
+    fsGroup: 1001
+    runAsUser: 1001
+    runAsNonRoot: true
+  
+  # BREAKING: Old persistence format (completely restructured)
+  persistence:
+    enabled: false
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: 1Gi
+    # BREAKING: path was renamed to mountPath
+    path: /opt/bitnami/nginx/html
+  
+  # BREAKING: serverBlock was renamed to staticSiteConfigmap
+  serverBlock: |
+    server {
+      listen 0.0.0.0:8080;
+      location / {
+        return 200 "Hello World!";
+        add_header Content-Type text/plain;
+      }
+    }
+  
+  # BREAKING: Old replica configuration (replicaCount moved to different section)
+  replicaCount: 2
+  
+  # BREAKING: Old health check format (probes structure changed)
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 6
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 5
+    timeoutSeconds: 3
+    periodSeconds: 5
+  
+  # BREAKING: Old metrics format (moved to metrics.enabled)
+  metrics:
+    enabled: false
+    # BREAKING: Old serviceMonitor format
+    serviceMonitor:
+      enabled: false
+      namespace: ""
+      interval: 30s
+
+
+
 # Simple app config
 app:
   name: "test-app"
   port: 3000
+
+

@@ -1,0 +1,391 @@
+name: Helm Chart Compatibility Check
+
+# Reasoning: Only trigger on Renovate PRs that modify Chart.yaml
+# This ensures we don't waste resources on unrelated changes
+on:
+  pull_request:
+    paths:
+      - 'Chart.yaml'
+    branches:
+      - master
+      - main
+
+jobs:
+  helm-compatibility-check:
+    # Reasoning: Only run on Renovate PRs to avoid unnecessary executions
+    if: startsWith(github.head_ref, 'renovate/')
+    runs-on: ubuntu-latest
+    
+    # Reasoning: Grant necessary permissions for labeling and commenting
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    
+    steps:
+    # Reasoning: Need full git history to compare versions between base and head
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        ref: ${{ github.event.pull_request.head.sha }}
+
+    # Reasoning: Extract which chart changed and version info from the diff
+    # This determines what we need to test specifically
+    - name: Extract Chart Changes
+      id: chart-changes
+      run: |
+        echo "Getting chart changes from diff..."
+        
+        # Get the diff of Chart.yaml between base and head
+        git diff origin/${{ github.event.pull_request.base.ref }}..HEAD Chart.yaml > chart.diff
+        cat chart.diff
+        
+        # More robust extraction using awk and proper parsing
+        # Find the dependency block that changed
+        CHANGED_CHART=""
+        OLD_VERSION=""
+        NEW_VERSION=""
+        REPOSITORY=""
+        
+        # Look for version changes in the diff
+        while IFS= read -r line; do
+          if [[ "$line" =~ ^-[[:space:]]*version:[[:space:]]*\"?([^\"]+)\"? ]]; then
+            OLD_VERSION="${BASH_REMATCH[1]}"
+          elif [[ "$line" =~ ^\+[[:space:]]*version:[[:space:]]*\"?([^\"]+)\"? ]]; then
+            NEW_VERSION="${BASH_REMATCH[1]}"
+          fi
+        done < chart.diff
+        
+        # Extract chart name from the context around the version change
+        # Get the dependency block that contains the version change
+        awk '
+        /^@@/ { in_hunk=1; next }
+        in_hunk && /^[[:space:]]*- name:/ {
+          if ($0 ~ /^\+/ || $0 ~ /^-/) next
+          gsub(/^[[:space:]]*- name:[[:space:]]*["\047]?/, "")
+          gsub(/["\047]?[[:space:]]*$/, "")
+          chart_name = $0
+        }
+        in_hunk && /version:/ && (/^\+/ || /^-/) {
+          print chart_name
+          exit
+        }
+        ' chart.diff > chart_name.tmp
+        
+        CHANGED_CHART=$(head -1 chart_name.tmp)
+        
+        # Get repository from Chart.yaml for this chart
+        if [ -n "$CHANGED_CHART" ]; then
+          REPOSITORY=$(awk -v chart="$CHANGED_CHART" '
+            $0 ~ "- name: " chart {found=1; next}
+            found && /repository:/ {
+              gsub(/.*repository:[[:space:]]*["\047]?/, "")
+              gsub(/["\047]?[[:space:]]*$/, "")
+              print $0
+              exit
+            }
+            found && /^[[:space:]]*-/ {found=0}
+          ' Chart.yaml)
+        fi
+        
+        # Output the results
+        echo "changed_chart=${CHANGED_CHART}" >> $GITHUB_OUTPUT
+        echo "old_version=${OLD_VERSION}" >> $GITHUB_OUTPUT  
+        echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+        echo "repository=${REPOSITORY}" >> $GITHUB_OUTPUT
+        
+        echo "Chart: $CHANGED_CHART"
+        echo "Version: $OLD_VERSION → $NEW_VERSION"
+        echo "Repository: $REPOSITORY"
+        
+        # Validate we got the required info
+        if [ -z "$CHANGED_CHART" ] || [ -z "$NEW_VERSION" ] || [ -z "$REPOSITORY" ]; then
+          echo "Error: Failed to extract chart information"
+          echo "CHANGED_CHART=$CHANGED_CHART"
+          echo "OLD_VERSION=$OLD_VERSION" 
+          echo "NEW_VERSION=$NEW_VERSION"
+          echo "REPOSITORY=$REPOSITORY"
+          exit 1
+        fi
+
+    # Reasoning: Create isolated Kubernetes cluster for safe testing
+    # Kind is perfect for CI/CD validation without affecting real clusters
+    - name: Setup Kind Cluster
+      uses: helm/kind-action@v1
+      with:
+        cluster_name: helm-test-cluster
+        kubectl_version: v1.28.0
+        
+    # Reasoning: Install Helm CLI to perform chart operations
+    # Use latest stable version for best compatibility
+    - name: Setup Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: 'latest'
+
+    # Reasoning: Add the chart repository to access the new version
+    # Extract repo from Chart.yaml to ensure we use the correct source
+    - name: Add Helm Repository
+      run: |
+        echo "=== Adding Helm Repository ==="
+        REPO_URL="${{ steps.chart-changes.outputs.repository }}"
+        echo "Repository URL: $REPO_URL"
+        
+        REPO_NAME=$(echo "$REPO_URL" | sed 's|https://||' | sed 's|/.*||' | sed 's|\.|-|g')
+        echo "Repository Name: $REPO_NAME"
+        
+        helm repo add $REPO_NAME $REPO_URL
+        echo "✅ Added repository: $REPO_NAME"
+        
+        helm repo update
+        echo "✅ Updated repositories"
+        
+        # List available versions for the chart
+        CHART_NAME="${{ steps.chart-changes.outputs.changed_chart }}"
+        echo "Available versions for $CHART_NAME:"
+        helm search repo $REPO_NAME/$CHART_NAME --versions | head -10
+
+    # Reasoning: Extract only the relevant values section for the changed chart
+    # This isolates testing to only what's affected by the version change
+    - name: Extract Chart-Specific Values
+      run: |
+        echo "=== Extracting Chart-Specific Values ==="
+        # Install yq for YAML processing
+        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod +x /usr/local/bin/yq
+        echo "✅ Installed yq"
+        
+        # Extract values for the specific chart that changed
+        CHART_NAME="${{ steps.chart-changes.outputs.changed_chart }}"
+        echo "Extracting values for chart: $CHART_NAME"
+        
+        echo "=== Full values.yaml ==="
+        cat values.yaml
+        
+        # Extract values for the specific chart that changed
+        yq eval ".$CHART_NAME" values.yaml > ${CHART_NAME}-values.yaml
+        
+        echo "=== Extracted values for $CHART_NAME ==="
+        cat ${CHART_NAME}-values.yaml
+        
+        # Check if we got any values
+        if [ ! -s ${CHART_NAME}-values.yaml ] || [ "$(cat ${CHART_NAME}-values.yaml)" = "null" ]; then
+          echo "❌ No values found for chart $CHART_NAME"
+          exit 1
+        fi
+        
+        echo "✅ Successfully extracted values for $CHART_NAME"
+
+    # Reasoning: Test the new chart version with current values using dry-run
+    # Dry-run catches validation errors without actually deploying anything
+    - name: Test Helm Chart Compatibility
+      id: helm-test
+      run: |
+        echo "=== Testing Helm Chart Compatibility ==="
+        set +e  # Don't exit on error, we want to capture it
+        
+        CHART_NAME="${{ steps.chart-changes.outputs.changed_chart }}"
+        NEW_VERSION="${{ steps.chart-changes.outputs.new_version }}"
+        OLD_VERSION="${{ steps.chart-changes.outputs.old_version }}"
+        REPO_NAME=$(echo "${{ steps.chart-changes.outputs.repository }}" | sed 's|https://||' | sed 's|/.*||' | sed 's|\.|-|g')
+        
+        echo "Chart: $CHART_NAME"
+        echo "Old Version: $OLD_VERSION"
+        echo "New Version: $NEW_VERSION" 
+        echo "Repository: $REPO_NAME"
+        
+        # Test with the new version
+        echo "=== Testing $REPO_NAME/$CHART_NAME version $NEW_VERSION ==="
+        
+        HELM_OUTPUT=$(helm template test-$CHART_NAME $REPO_NAME/$CHART_NAME \
+          --version $NEW_VERSION \
+          --values ${CHART_NAME}-values.yaml \
+          --debug 2>&1)
+        
+        HELM_EXIT_CODE=$?
+        
+        echo "Helm exit code: $HELM_EXIT_CODE"
+        echo "helm_exit_code=$HELM_EXIT_CODE" >> $GITHUB_OUTPUT
+        
+        # Save output for analysis
+        echo "$HELM_OUTPUT" > helm-output.log
+        
+        if [ $HELM_EXIT_CODE -eq 0 ]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "✅ Helm template generation successful"
+        else
+          echo "status=failure" >> $GITHUB_OUTPUT
+          echo "❌ Helm template generation failed"
+        fi
+        
+        echo "=== Helm Output (first 50 lines) ==="
+        echo "$HELM_OUTPUT" | head -50
+
+    # Reasoning: Analyze the output to categorize the type of issue
+    # Different error types require different actions from developers
+    - name: Analyze Compatibility Results
+      id: analyze
+      run: |
+        HELM_OUTPUT=$(cat helm-output.log)
+        
+        # Check for different types of issues
+        if echo "$HELM_OUTPUT" | grep -qi "unknown field\|forbidden"; then
+          echo "issue_type=breaking" >> $GITHUB_OUTPUT
+          echo "severity=high" >> $GITHUB_OUTPUT
+        elif echo "$HELM_OUTPUT" | grep -qi "deprecated\|warning"; then
+          echo "issue_type=deprecated" >> $GITHUB_OUTPUT
+          echo "severity=medium" >> $GITHUB_OUTPUT
+        elif [ "${{ steps.helm-test.outputs.helm_exit_code }}" = "0" ]; then
+          echo "issue_type=none" >> $GITHUB_OUTPUT
+          echo "severity=low" >> $GITHUB_OUTPUT
+        else
+          echo "issue_type=unknown" >> $GITHUB_OUTPUT
+          echo "severity=high" >> $GITHUB_OUTPUT
+        fi
+        
+        # Extract specific error messages for better feedback
+        ERROR_SUMMARY=$(echo "$HELM_OUTPUT" | grep -E "Error:|error:|ERROR:" | head -3 | tr '\n' '; ')
+        echo "error_summary=$ERROR_SUMMARY" >> $GITHUB_OUTPUT
+
+    # Reasoning: Apply appropriate labels based on compatibility test results
+    # Visual feedback helps developers quickly understand PR impact
+    - name: Apply Compatibility Labels
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { issue_type, severity } = ${{ toJSON(steps.analyze.outputs) }};
+          const chartName = '${{ steps.chart-changes.outputs.changed_chart }}';
+          const oldVersion = '${{ steps.chart-changes.outputs.old_version }}';
+          const newVersion = '${{ steps.chart-changes.outputs.new_version }}';
+          
+          // Remove existing compatibility labels
+          const existingLabels = await github.rest.issues.listLabelsOnIssue({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          
+          for (const label of existingLabels.data) {
+            if (label.name.includes('helm-upgrade-')) {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                name: label.name,
+              });
+            }
+          }
+          
+          // Apply new label based on results
+          let labelName, labelColor;
+          
+          switch(issue_type) {
+            case 'none':
+              labelName = `helm-upgrade-safe-${chartName}`;
+              labelColor = '28a745'; // Green
+              break;
+            case 'deprecated':
+              labelName = `helm-upgrade-warning-${chartName}`;
+              labelColor = 'ffc107'; // Yellow
+              break;
+            case 'breaking':
+            case 'unknown':
+              labelName = `helm-upgrade-breaking-${chartName}`;
+              labelColor = 'dc3545'; // Red
+              break;
+          }
+          
+          // Create label if it doesn't exist
+          try {
+            await github.rest.issues.createLabel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: labelName,
+              color: labelColor,
+            });
+          } catch (error) {
+            // Label might already exist, that's fine
+          }
+          
+          // Apply the label
+          await github.rest.issues.addLabels({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            labels: [labelName],
+          });
+
+    # Reasoning: Provide detailed feedback comment with actionable information
+    # Developers need to know exactly what broke and how to fix it
+    - name: Comment on PR
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { changed_chart, old_version, new_version } = ${{ toJSON(steps.chart-changes.outputs) }};
+          const { issue_type, severity, error_summary } = ${{ toJSON(steps.analyze.outputs) }};
+          const helmExitCode = '${{ steps.helm-test.outputs.helm_exit_code }}';
+          
+          let emoji, status, details;
+          
+          switch(issue_type) {
+            case 'none':
+              emoji = '✅';
+              status = 'COMPATIBLE';
+              details = 'Your current values.yaml works perfectly with the new chart version.';
+              break;
+            case 'deprecated':
+              emoji = '⚠️';
+              status = 'DEPRECATED CONFIG DETECTED';
+              details = `Some configurations are deprecated but still work. Consider updating them soon.\n\n${error_summary}`;
+              break;
+            case 'breaking':
+              emoji = '❌';
+              status = 'BREAKING CHANGES DETECTED';
+              details = `Your current values.yaml is incompatible with the new chart version.\n\n**Errors:**\n${error_summary}\n\n**Action Required:** Update your values.yaml before merging this PR.`;
+              break;
+            default:
+              emoji = '🔍';
+              status = 'UNKNOWN COMPATIBILITY';
+              details = `Helm template generation failed with exit code ${helmExitCode}.\n\n${error_summary}`;
+          }
+          
+          const comment = `## ${emoji} Helm Compatibility Check
+          
+          **Chart:** \`${changed_chart}\`  
+          **Version Change:** \`${old_version}\` → \`${new_version}\`  
+          **Status:** ${status}
+          
+          ${details}
+          
+          <details>
+          <summary>View Full Helm Output</summary>
+          
+          \`\`\`
+          ${require('fs').readFileSync('helm-output.log', 'utf8').slice(0, 2000)}${require('fs').readFileSync('helm-output.log', 'utf8').length > 2000 ? '\n... (truncated)' : ''}
+          \`\`\`
+          
+          </details>
+          `;
+          
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: comment,
+          });
+
+    # Reasoning: Set job status based on compatibility results
+    # This can be used by branch protection rules or other workflows
+    - name: Set Job Status
+      run: |
+        if [ "${{ steps.analyze.outputs.issue_type }}" = "breaking" ]; then
+          echo "❌ Breaking changes detected - manual intervention required"
+          exit 1
+        elif [ "${{ steps.analyze.outputs.issue_type }}" = "deprecated" ]; then
+          echo "⚠️  Deprecated configurations detected - consider updating values.yaml"
+          exit 0
+        else
+          echo "✅ Chart upgrade is safe to proceed"
+          exit 0
+        fi

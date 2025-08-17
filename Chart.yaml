@@ -6,9 +6,9 @@ version: 0.1.0
 appVersion: "1.0.0"
 
 dependencies:
-  - name: nginx
-    version: "21.1.6"
-    repository: "https://charts.bitnami.com/bitnami"
   - name: redis
     version: "17.17.1"
+    repository: "https://charts.bitnami.com/bitnami"
+ - name: nginx
+    version: "9.5.4"  # Very old version from 2022 - will break with modern versions
     repository: "https://charts.bitnami.com/bitnami"
