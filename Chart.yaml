@@ -18,7 +18,7 @@ dependencies:
     repository: "https://charts.bitnami.com/bitnami"
   # Using old MySQL version with authentication changes
   - name: mysql
-    version: "8.8.23"   # Old version, current is 11.x.x with auth structure changes
+    version: "14.0.3"   # Old version, current is 11.x.x with auth structure changes
     repository: "https://charts.bitnami.com/bitnami"
   # Using old Elasticsearch with major API changes
   - name: elasticsearch
