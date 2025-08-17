@@ -16,6 +16,12 @@ jobs:
     if: startsWith(github.head_ref, 'renovate/')
     runs-on: ubuntu-latest
     
+    # Reasoning: Grant necessary permissions for labeling and commenting
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    
     steps:
     # Reasoning: Need full git history to compare versions between base and head
     - name: Checkout Repository
@@ -122,38 +128,75 @@ jobs:
     # Extract repo from Chart.yaml to ensure we use the correct source
     - name: Add Helm Repository
       run: |
-        REPO_NAME=$(echo "${{ steps.chart-changes.outputs.repository }}" | sed 's|https://||' | sed 's|/.*||' | sed 's|\.|-|g')
-        helm repo add $REPO_NAME ${{ steps.chart-changes.outputs.repository }}
+        echo "=== Adding Helm Repository ==="
+        REPO_URL="${{ steps.chart-changes.outputs.repository }}"
+        echo "Repository URL: $REPO_URL"
+        
+        REPO_NAME=$(echo "$REPO_URL" | sed 's|https://||' | sed 's|/.*||' | sed 's|\.|-|g')
+        echo "Repository Name: $REPO_NAME"
+        
+        helm repo add $REPO_NAME $REPO_URL
+        echo "✅ Added repository: $REPO_NAME"
+        
         helm repo update
+        echo "✅ Updated repositories"
+        
+        # List available versions for the chart
+        CHART_NAME="${{ steps.chart-changes.outputs.changed_chart }}"
+        echo "Available versions for $CHART_NAME:"
+        helm search repo $REPO_NAME/$CHART_NAME --versions | head -10
 
     # Reasoning: Extract only the relevant values section for the changed chart
     # This isolates testing to only what's affected by the version change
     - name: Extract Chart-Specific Values
       run: |
+        echo "=== Extracting Chart-Specific Values ==="
         # Install yq for YAML processing
         sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
         sudo chmod +x /usr/local/bin/yq
+        echo "✅ Installed yq"
         
         # Extract values for the specific chart that changed
         CHART_NAME="${{ steps.chart-changes.outputs.changed_chart }}"
+        echo "Extracting values for chart: $CHART_NAME"
+        
+        echo "=== Full values.yaml ==="
+        cat values.yaml
+        
+        # Extract values for the specific chart that changed
         yq eval ".$CHART_NAME" values.yaml > ${CHART_NAME}-values.yaml
         
-        echo "Extracted values for $CHART_NAME:"
+        echo "=== Extracted values for $CHART_NAME ==="
         cat ${CHART_NAME}-values.yaml
+        
+        # Check if we got any values
+        if [ ! -s ${CHART_NAME}-values.yaml ] || [ "$(cat ${CHART_NAME}-values.yaml)" = "null" ]; then
+          echo "❌ No values found for chart $CHART_NAME"
+          exit 1
+        fi
+        
+        echo "✅ Successfully extracted values for $CHART_NAME"
 
     # Reasoning: Test the new chart version with current values using dry-run
     # Dry-run catches validation errors without actually deploying anything
     - name: Test Helm Chart Compatibility
       id: helm-test
       run: |
+        echo "=== Testing Helm Chart Compatibility ==="
         set +e  # Don't exit on error, we want to capture it
         
         CHART_NAME="${{ steps.chart-changes.outputs.changed_chart }}"
         NEW_VERSION="${{ steps.chart-changes.outputs.new_version }}"
+        OLD_VERSION="${{ steps.chart-changes.outputs.old_version }}"
         REPO_NAME=$(echo "${{ steps.chart-changes.outputs.repository }}" | sed 's|https://||' | sed 's|/.*||' | sed 's|\.|-|g')
         
+        echo "Chart: $CHART_NAME"
+        echo "Old Version: $OLD_VERSION"
+        echo "New Version: $NEW_VERSION" 
+        echo "Repository: $REPO_NAME"
+        
         # Test with the new version
-        echo "Testing $REPO_NAME/$CHART_NAME version $NEW_VERSION..."
+        echo "=== Testing $REPO_NAME/$CHART_NAME version $NEW_VERSION ==="
         
         HELM_OUTPUT=$(helm template test-$CHART_NAME $REPO_NAME/$CHART_NAME \
           --version $NEW_VERSION \
@@ -162,6 +205,7 @@ jobs:
         
         HELM_EXIT_CODE=$?
         
+        echo "Helm exit code: $HELM_EXIT_CODE"
         echo "helm_exit_code=$HELM_EXIT_CODE" >> $GITHUB_OUTPUT
         
         # Save output for analysis
@@ -173,9 +217,10 @@ jobs:
         else
           echo "status=failure" >> $GITHUB_OUTPUT
           echo "❌ Helm template generation failed"
-          echo "Error output:"
-          echo "$HELM_OUTPUT"
         fi
+        
+        echo "=== Helm Output (first 50 lines) ==="
+        echo "$HELM_OUTPUT" | head -50
 
     # Reasoning: Analyze the output to categorize the type of issue
     # Different error types require different actions from developers
