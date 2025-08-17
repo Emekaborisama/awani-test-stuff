@@ -10,5 +10,5 @@ dependencies:
     version: "17.17.1"
     repository: "https://charts.bitnami.com/bitnami"
   - name: nginx
-    version: "9.5.4"  # Very old version from 2022 - will break with modern versions
+    version: "8.9.1"  # Very old version from 2021 - will definitely break with modern versions
     repository: "https://charts.bitnami.com/bitnami"
