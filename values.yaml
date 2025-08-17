@@ -58,3 +58,104 @@ redis:
 app:
   name: "test-app"
   port: 3000
+
+
+# Values file with configurations that WILL BREAK with newer chart versions
+
+postgresql:
+  # BREAKING: Old authentication structure (removed in v12+)
+  postgresqlUsername: "myuser"           # Changed to auth.username
+  postgresqlPassword: "mypassword"       # Changed to auth.password
+  postgresqlDatabase: "mydatabase"       # Changed to auth.database
+  
+  # BREAKING: Old persistence structure (changed in v12+)
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce           # Changed to accessModes (array)
+    size: 8Gi
+  
+  # BREAKING: Old service structure
+  service:
+    type: ClusterIP
+    port: 5432
+    annotations: {}
+  
+  # BREAKING: Old metrics structure (completely restructured)
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+    prometheusRule:
+      enabled: false
+
+mysql:
+  # BREAKING: Old authentication format (changed in v9+)
+  mysqlRootPassword: "rootpassword"      # Changed to auth.rootPassword
+  mysqlUser: "myuser"                    # Changed to auth.username  
+  mysqlPassword: "mypassword"            # Changed to auth.password
+  mysqlDatabase: "mydatabase"            # Changed to auth.database
+  
+  # BREAKING: Old architecture structure (removed in v10+)
+  architecture: standalone               # Changed to different structure
+  
+  # BREAKING: Old persistence format
+  master:
+    persistence:
+      enabled: true
+      storageClass: ""
+      accessMode: ReadWriteOnce          # Changed to accessModes array
+      size: 8Gi
+  
+  # BREAKING: Old metrics structure
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+
+elasticsearch:
+  # BREAKING: Old master/data node structure (completely changed in v19+)
+  master:
+    name: master
+    replicas: 3
+    heapSize: 128m
+    persistence:
+      enabled: true
+      storageClass: ""
+      accessMode: ReadWriteOnce          # Changed to accessModes
+      size: 8Gi
+  
+  data:
+    name: data  
+    replicas: 2
+    heapSize: 1024m
+    persistence:
+      enabled: true
+      storageClass: ""
+      accessMode: ReadWriteOnce          # Changed to accessModes
+      size: 30Gi
+  
+  # BREAKING: Old coordinating structure (removed)
+  coordinating:
+    name: coordinating
+    replicas: 2
+    heapSize: 128m
+  
+  # BREAKING: Old security structure (completely changed)
+  security:
+    enabled: false
+    tls:
+      restEncryption: false
+      interNodeEncryption: false
+  
+  # BREAKING: Old service structure
+  service:
+    type: ClusterIP
+    port: 9200
+    nodePort: ""
+
+# Application configuration (this should work fine)
+app:
+  name: "test-app-with-databases"
+  port: 3000
+  environment: "development"
