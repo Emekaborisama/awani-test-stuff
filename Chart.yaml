@@ -12,3 +12,15 @@ dependencies:
   - name: redis
     version: "17.17.1"
     repository: "https://charts.bitnami.com/bitnami"
+  # Using old PostgreSQL version with breaking changes
+  - name: postgresql
+    version: "11.9.13"  # Old version, current is 15.x.x with major breaking changes
+    repository: "https://charts.bitnami.com/bitnami"
+  # Using old MySQL version with authentication changes
+  - name: mysql
+    version: "8.8.23"   # Old version, current is 11.x.x with auth structure changes
+    repository: "https://charts.bitnami.com/bitnami"
+  # Using old Elasticsearch with major API changes
+  - name: elasticsearch
+    version: "17.9.29"  # Very old version, current is 21.x.x with breaking changes
+    repository: "https://charts.bitnami.com/bitnami"
