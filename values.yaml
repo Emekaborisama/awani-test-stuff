@@ -54,108 +54,102 @@ redis:
     persistence:
       enabled: false
 
+
+
+nginx:
+  # BREAKING: Old image configuration format (deprecated in nginx 13+)
+  image:
+    registry: docker.io
+    repository: bitnami/nginx
+    tag: 1.20.2-debian-10-r77
+    pullPolicy: IfNotPresent
+    # BREAKING: pullSecrets was moved to a different location
+    pullSecrets: []
+  
+  # BREAKING: Old service configuration (serviceType renamed to service.type)
+  serviceType: ClusterIP
+  servicePort: 8080
+  
+  # BREAKING: Old ingress format (completely restructured in nginx 13+)
+  ingress:
+    enabled: true
+    certManager: false
+    # BREAKING: annotations format changed
+    annotations:
+      kubernetes.io/ingress.class: "nginx"  # Should be ingressClassName
+      nginx.ingress.kubernetes.io/rewrite-target: /
+    # BREAKING: hosts format completely changed
+    hosts:
+      - name: nginx.local
+        path: /
+        tls: false
+        tlsSecret: nginx.local-tls
+  
+  # BREAKING: Old resource format (requests/limits structure changed)
+  resources:
+    # This format was deprecated
+    requests: "64Mi"
+    limits: "128Mi"
+  
+  # BREAKING: Old security context format (moved to containerSecurityContext)
+  securityContext:
+    enabled: true
+    fsGroup: 1001
+    runAsUser: 1001
+    runAsNonRoot: true
+  
+  # BREAKING: Old persistence format (completely restructured)
+  persistence:
+    enabled: false
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: 1Gi
+    # BREAKING: path was renamed to mountPath
+    path: /opt/bitnami/nginx/html
+  
+  # BREAKING: serverBlock was renamed to staticSiteConfigmap
+  serverBlock: |
+    server {
+      listen 0.0.0.0:8080;
+      location / {
+        return 200 "Hello World!";
+        add_header Content-Type text/plain;
+      }
+    }
+  
+  # BREAKING: Old replica configuration (replicaCount moved to different section)
+  replicaCount: 2
+  
+  # BREAKING: Old health check format (probes structure changed)
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 6
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 5
+    timeoutSeconds: 3
+    periodSeconds: 5
+  
+  # BREAKING: Old metrics format (moved to metrics.enabled)
+  metrics:
+    enabled: false
+    # BREAKING: Old serviceMonitor format
+    serviceMonitor:
+      enabled: false
+      namespace: ""
+      interval: 30s
+
+
+
 # Simple app config
 app:
   name: "test-app"
   port: 3000
 
 
-# Values file with configurations that WILL BREAK with newer chart versions
-
-postgresql:
-  # BREAKING: Old authentication structure (removed in v12+)
-  postgresqlUsername: "myuser"           # Changed to auth.username
-  postgresqlPassword: "mypassword"       # Changed to auth.password
-  postgresqlDatabase: "mydatabase"       # Changed to auth.database
-  
-  # BREAKING: Old persistence structure (changed in v12+)
-  persistence:
-    enabled: true
-    storageClass: ""
-    accessMode: ReadWriteOnce           # Changed to accessModes (array)
-    size: 8Gi
-  
-  # BREAKING: Old service structure
-  service:
-    type: ClusterIP
-    port: 5432
-    annotations: {}
-  
-  # BREAKING: Old metrics structure (completely restructured)
-  metrics:
-    enabled: true
-    serviceMonitor:
-      enabled: false
-    prometheusRule:
-      enabled: false
-
-mysql:
-  # BREAKING: Old authentication format (changed in v9+)
-  mysqlRootPassword: "rootpassword"      # Changed to auth.rootPassword
-  mysqlUser: "myuser"                    # Changed to auth.username  
-  mysqlPassword: "mypassword"            # Changed to auth.password
-  mysqlDatabase: "mydatabase"            # Changed to auth.database
-  
-  # BREAKING: Old architecture structure (removed in v10+)
-  architecture: standalone               # Changed to different structure
-  
-  # BREAKING: Old persistence format
-  master:
-    persistence:
-      enabled: true
-      storageClass: ""
-      accessMode: ReadWriteOnce          # Changed to accessModes array
-      size: 8Gi
-  
-  # BREAKING: Old metrics structure
-  metrics:
-    enabled: true
-    serviceMonitor:
-      enabled: false
-
-elasticsearch:
-  # BREAKING: Old master/data node structure (completely changed in v19+)
-  master:
-    name: master
-    replicas: 3
-    heapSize: 128m
-    persistence:
-      enabled: true
-      storageClass: ""
-      accessMode: ReadWriteOnce          # Changed to accessModes
-      size: 8Gi
-  
-  data:
-    name: data  
-    replicas: 2
-    heapSize: 1024m
-    persistence:
-      enabled: true
-      storageClass: ""
-      accessMode: ReadWriteOnce          # Changed to accessModes
-      size: 30Gi
-  
-  # BREAKING: Old coordinating structure (removed)
-  coordinating:
-    name: coordinating
-    replicas: 2
-    heapSize: 128m
-  
-  # BREAKING: Old security structure (completely changed)
-  security:
-    enabled: false
-    tls:
-      restEncryption: false
-      interNodeEncryption: false
-  
-  # BREAKING: Old service structure
-  service:
-    type: ClusterIP
-    port: 9200
-    nodePort: ""
-
-# Application configuration (this should work fine)
-app:
-  name: "test-app-with-databases"
-  port: 3000
-  environment: "development"
