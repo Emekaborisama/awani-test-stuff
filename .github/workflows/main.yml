@@ -33,21 +33,75 @@ jobs:
         
         # Get the diff of Chart.yaml between base and head
         git diff origin/${{ github.event.pull_request.base.ref }}..HEAD Chart.yaml > chart.diff
+        cat chart.diff
         
-        # Extract changed dependency info
-        CHANGED_CHART=$(grep -E "^\+.*name:" chart.diff | sed 's/.*name: //' | tr -d '"' | head -1)
-        OLD_VERSION=$(grep -E "^\-.*version:" chart.diff | sed 's/.*version: //' | tr -d '"' | head -1)
-        NEW_VERSION=$(grep -E "^\+.*version:" chart.diff | sed 's/.*version: //' | tr -d '"' | head -1)
-        REPOSITORY=$(grep -A2 -B2 "name: $CHANGED_CHART" Chart.yaml | grep repository | sed 's/.*repository: //' | tr -d '"')
+        # More robust extraction using awk and proper parsing
+        # Find the dependency block that changed
+        CHANGED_CHART=""
+        OLD_VERSION=""
+        NEW_VERSION=""
+        REPOSITORY=""
         
-        echo "changed_chart=$CHANGED_CHART" >> $GITHUB_OUTPUT
-        echo "old_version=$OLD_VERSION" >> $GITHUB_OUTPUT
-        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-        echo "repository=$REPOSITORY" >> $GITHUB_OUTPUT
+        # Look for version changes in the diff
+        while IFS= read -r line; do
+          if [[ "$line" =~ ^-[[:space:]]*version:[[:space:]]*\"?([^\"]+)\"? ]]; then
+            OLD_VERSION="${BASH_REMATCH[1]}"
+          elif [[ "$line" =~ ^\+[[:space:]]*version:[[:space:]]*\"?([^\"]+)\"? ]]; then
+            NEW_VERSION="${BASH_REMATCH[1]}"
+          fi
+        done < chart.diff
+        
+        # Extract chart name from the context around the version change
+        # Get the dependency block that contains the version change
+        awk '
+        /^@@/ { in_hunk=1; next }
+        in_hunk && /^[[:space:]]*- name:/ {
+          if ($0 ~ /^\+/ || $0 ~ /^-/) next
+          gsub(/^[[:space:]]*- name:[[:space:]]*["\047]?/, "")
+          gsub(/["\047]?[[:space:]]*$/, "")
+          chart_name = $0
+        }
+        in_hunk && /version:/ && (/^\+/ || /^-/) {
+          print chart_name
+          exit
+        }
+        ' chart.diff > chart_name.tmp
+        
+        CHANGED_CHART=$(head -1 chart_name.tmp)
+        
+        # Get repository from Chart.yaml for this chart
+        if [ -n "$CHANGED_CHART" ]; then
+          REPOSITORY=$(awk -v chart="$CHANGED_CHART" '
+            $0 ~ "- name: " chart {found=1; next}
+            found && /repository:/ {
+              gsub(/.*repository:[[:space:]]*["\047]?/, "")
+              gsub(/["\047]?[[:space:]]*$/, "")
+              print $0
+              exit
+            }
+            found && /^[[:space:]]*-/ {found=0}
+          ' Chart.yaml)
+        fi
+        
+        # Output the results
+        echo "changed_chart=${CHANGED_CHART}" >> $GITHUB_OUTPUT
+        echo "old_version=${OLD_VERSION}" >> $GITHUB_OUTPUT  
+        echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+        echo "repository=${REPOSITORY}" >> $GITHUB_OUTPUT
         
         echo "Chart: $CHANGED_CHART"
         echo "Version: $OLD_VERSION → $NEW_VERSION"
         echo "Repository: $REPOSITORY"
+        
+        # Validate we got the required info
+        if [ -z "$CHANGED_CHART" ] || [ -z "$NEW_VERSION" ] || [ -z "$REPOSITORY" ]; then
+          echo "Error: Failed to extract chart information"
+          echo "CHANGED_CHART=$CHANGED_CHART"
+          echo "OLD_VERSION=$OLD_VERSION" 
+          echo "NEW_VERSION=$NEW_VERSION"
+          echo "REPOSITORY=$REPOSITORY"
+          exit 1
+        fi
 
     # Reasoning: Create isolated Kubernetes cluster for safe testing
     # Kind is perfect for CI/CD validation without affecting real clusters
