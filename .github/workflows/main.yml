@@ -228,6 +228,7 @@ jobs:
       id: analyze
       run: |
         HELM_OUTPUT=$(cat helm-output.log)
+        echo "$HELM_OUTPUT"
         
         # Check for different types of issues
         if echo "$HELM_OUTPUT" | grep -qi "unknown field\|forbidden"; then
