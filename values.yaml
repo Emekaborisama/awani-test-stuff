@@ -20,97 +20,198 @@ redis:
       enabled: false
 
 
-
 nginx:
-  # BREAKING: Old image configuration format (deprecated in nginx 13+)
+  # BREAKING: Extremely old format that will definitely fail with nginx 13+
+  
+  # BREAKING: Old global image settings (completely removed)
+  global:
+    imageRegistry: ""
+    imagePullSecrets: []
+  
+  # BREAKING: Old image format (registry field removed)
   image:
     registry: docker.io
     repository: bitnami/nginx
-    tag: 1.20.2-debian-10-r77
+    tag: 1.19.10-debian-10-r0  # Very old tag format
     pullPolicy: IfNotPresent
-    # BREAKING: pullSecrets was moved to a different location
     pullSecrets: []
+    debug: false
   
-  # BREAKING: Old service configuration (serviceType renamed to service.type)
-  serviceType: ClusterIP
-  servicePort: 8080
+  # BREAKING: Old naming convention (nameOverride deprecated)
+  nameOverride: ""
+  fullnameOverride: ""
   
-  # BREAKING: Old ingress format (completely restructured in nginx 13+)
+  # BREAKING: clusterDomain was removed
+  clusterDomain: cluster.local
+  
+  # BREAKING: Old service format (completely restructured)
+  service:
+    type: ClusterIP
+    port: 80
+    httpsPort: 443
+    nodePorts:
+      http: ""
+      https: ""
+    # BREAKING: targetPort format changed
+    targetPort:
+      http: http
+      https: https
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    externalTrafficPolicy: Cluster
+    annotations: {}
+  
+  # BREAKING: Old ingress format (major restructure in 13+)
   ingress:
     enabled: true
     certManager: false
-    # BREAKING: annotations format changed
+    pathType: Prefix
+    apiVersion: ""
+    hostname: nginx.local
+    path: /
+    # BREAKING: Old annotations format
     annotations:
-      kubernetes.io/ingress.class: "nginx"  # Should be ingressClassName
-      nginx.ingress.kubernetes.io/rewrite-target: /
-    # BREAKING: hosts format completely changed
-    hosts:
-      - name: nginx.local
-        path: /
-        tls: false
-        tlsSecret: nginx.local-tls
+      kubernetes.io/ingress.class: nginx
+      nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    tls: false
+    selfSigned: false
+    # BREAKING: extraHosts format removed
+    extraHosts: []
+    extraPaths: []
+    extraTls: []
+    secrets: []
   
-  # BREAKING: Old resource format (requests/limits structure changed)
+  # BREAKING: Old health check probe format (completely changed)
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+    successThreshold: 1
+    # BREAKING: httpGet format changed
+    httpGet:
+      path: /
+      port: http
+      scheme: HTTP
+  
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+    httpGet:
+      path: /
+      port: http
+      scheme: HTTP
+  
+  # BREAKING: Old resource format with wrong structure
   resources:
-    # This format was deprecated
-    requests: "64Mi"
-    limits: "128Mi"
+    limits: {}
+    requests:
+      memory: 512Mi
+      cpu: 300m
   
-  # BREAKING: Old security context format (moved to containerSecurityContext)
-  securityContext:
+  # BREAKING: Old pod security context (moved to containerSecurityContext)
+  podSecurityContext:
     enabled: true
     fsGroup: 1001
     runAsUser: 1001
+    runAsGroup: 1001
     runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
   
-  # BREAKING: Old persistence format (completely restructured)
-  persistence:
-    enabled: false
-    storageClass: ""
-    accessMode: ReadWriteOnce
-    size: 1Gi
-    # BREAKING: path was renamed to mountPath
-    path: /opt/bitnami/nginx/html
+  # BREAKING: containerSecurityContext didn't exist in old versions
+  securityContext:
+    enabled: true
+    runAsUser: 1001
+    runAsNonRoot: true
+    readOnlyRootFilesystem: false
   
-  # BREAKING: serverBlock was renamed to staticSiteConfigmap
-  serverBlock: |
+  # BREAKING: Old replica and update strategy format
+  replicaCount: 1
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate: {}
+  
+  # BREAKING: Old static site format (serverBlock removed)
+  serverBlock: |-
     server {
       listen 0.0.0.0:8080;
       location / {
-        return 200 "Hello World!";
+        return 200 "Old nginx config format!";
         add_header Content-Type text/plain;
       }
     }
   
-  # BREAKING: Old replica configuration (replicaCount moved to different section)
-  replicaCount: 2
+  # BREAKING: staticSitePVC format (removed in favor of persistence)
+  staticSitePVC: ""
   
-  # BREAKING: Old health check format (probes structure changed)
-  livenessProbe:
-    httpGet:
-      path: /
-      port: http
-    initialDelaySeconds: 30
-    timeoutSeconds: 5
-    failureThreshold: 6
-  readinessProbe:
-    httpGet:
-      path: /
-      port: http
-    initialDelaySeconds: 5
-    timeoutSeconds: 3
-    periodSeconds: 5
+  # BREAKING: Old persistence format
+  persistence:
+    enabled: false
+    # BREAKING: storageClass format changed
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 1Gi
+    dataSource: {}
+    existingClaim: ""
+    # BREAKING: mountPath was called path
+    path: /opt/bitnami/nginx/html
   
-  # BREAKING: Old metrics format (moved to metrics.enabled)
+  # BREAKING: Old sidecar format (completely removed)
+  sidecarSingleProcessNamespace: false
+  
+  # BREAKING: Old pod disruption budget format
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    maxUnavailable: ""
+  
+  # BREAKING: Old autoscaling format (apiVersion changed)
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 11
+    targetCPU: ""
+    targetMemory: ""
+  
+  # BREAKING: Old LDAP authentication (removed)
+  ldapDaemon:
+    enabled: false
+    image:
+      registry: docker.io
+      repository: bitnami/nginx-ldap-auth-daemon
+      tag: 0.20200116.0-debian-10-r369
+  
+  # BREAKING: Old metrics format (structure completely changed)
   metrics:
     enabled: false
-    # BREAKING: Old serviceMonitor format
+    image:
+      registry: docker.io
+      repository: bitnami/nginx-exporter
+      tag: 0.9.0-debian-10-r2
+    podAnnotations: {}
+    securityContext:
+      enabled: false
+      runAsUser: 1001
+    service:
+      port: 9113
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.metrics.service.port }}"
+    resources:
+      limits: {}
+      requests: {}
     serviceMonitor:
       enabled: false
       namespace: ""
       interval: 30s
-
-
+      scrapeTimeout: ""
 
 # Simple app config
 app:
