@@ -22,5 +22,5 @@ dependencies:
     repository: "https://charts.bitnami.com/bitnami"
   # Using old Elasticsearch with major API changes
   - name: elasticsearch
-    version: "17.9.29"  # Very old version, current is 21.x.x with breaking changes
+    version: "22.1.6"  # Very old version, current is 21.x.x with breaking changes
     repository: "https://charts.bitnami.com/bitnami"
