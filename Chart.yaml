@@ -7,7 +7,7 @@ appVersion: "1.0.0"
 
 dependencies:
   - name: redis
-    version: "17.17.1"
+    version: "22.0.7"
     repository: "https://charts.bitnami.com/bitnami"
   - name: nginx
     version: "8.9.1"  # Very old version from 2021 - will definitely break with modern versions
